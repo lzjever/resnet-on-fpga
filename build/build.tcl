@@ -1,30 +1,27 @@
-# Vivado build script for ResNet CNN on Z7-Nano
-# Usage: vivado -mode batch -source build/build.tcl
+# ResNet CNN build for Z7-Nano
 set part xc7z020clg400-2
+set proj resnet
 
-create_project resnet ./.build -part $part -force
+create_project $proj ./build_fpga -part $part -force
 
-add_files ../rtl/resnet_top.v
-set_property top resnet_top [current_fileset]
+add_files [list rtl/resnet_board.v rtl/axi_lite_slave.v]
+set_property top resnet_board [current_fileset]
 
-# Constraints: PS7 instantiation (same as lab09)
-add_files -fileset constrs_1 -norecurse [make_constr]
-proc make_constr {} {
-    set f [open "resnet.xdc" w]
-    puts $f "# Clock from PS FCLK0"
-    puts $f "create_clock -period 20.000 -name sys_clk \[get_pins {PS7_i/FCLKCLK\[0\]}\]"
-    close $f
-    return "resnet.xdc"
-}
+# Constraints
+set fp [open "resnet.xdc" w]
+puts $fp "create_clock -period 20.000 -name sys_clk \[get_pins {PS7_i/FCLKCLK\[0\]}\]"
+close $fp
+add_files -fileset constrs_1 resnet.xdc
 
 launch_runs synth_1 -jobs 8
 wait_on_run synth_1
-
 launch_runs impl_1 -to_step write_bitstream -jobs 8
 wait_on_run impl_1
 
+open_run impl_1
 set wns [get_property SLACK [get_timing_paths]]
+report_utilization -file build_fpga/util.rpt
 puts "=============================="
 puts " WNS: ${wns} ns"
-puts " Bitstream: [glob ./.build/*.runs/impl_1/*.bit]"
+puts " Bitstream: [glob ./build_fpga/*.runs/impl_1/*.bit]"
 puts "=============================="

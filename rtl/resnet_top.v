@@ -48,14 +48,12 @@ module resnet_top (
     localparam NUM_OUTPUT_WORDS = FC_OUT / 2;  // 2
 
     // ========================================================
-    // FSM States
+    // FSM States (localparam for Vivado synthesis compatibility)
     // ========================================================
-    typedef enum reg [3:0] {
-        S_IDLE, S_CONV, S_POOL, S_FC, S_DONE
-    } state_t;
-    state_t state;
+    localparam [3:0] S_IDLE = 4'd0, S_CONV = 4'd1, S_POOL = 4'd2, S_FC = 4'd3, S_DONE = 4'd4;
+    reg [3:0] state;
 
-    // Control
+    // Control (start has single driver: this always block only)
     reg start;
     reg done;
     reg busy;
@@ -82,26 +80,26 @@ module resnet_top (
     // ========================================================
     (* ram_style = "block" *)
     reg signed [15:0] input_mem [0:IN_CH*IN_H*IN_W-1];
-    initial $readmemh("sim/hex/input.hex", input_mem);
+    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/input.hex", input_mem);
 
     // ========================================================
     // ROM: Weights (compile-time constants)
     // ========================================================
     (* rom_style = "block" *)
     reg signed [15:0] conv_w [0:OUT_CH*IN_CH*9-1];
-    initial $readmemh("sim/hex/conv_weight.hex", conv_w);
+    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/conv_weight.hex", conv_w);
 
     (* rom_style = "distributed" *)
     reg signed [15:0] conv_b [0:OUT_CH-1];
-    initial $readmemh("sim/hex/conv_bias.hex", conv_b);
+    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/conv_bias.hex", conv_b);
 
     (* rom_style = "block" *)
     reg signed [15:0] fc_w [0:FC_OUT*FC_IN-1];
-    initial $readmemh("sim/hex/fc_weight.hex", fc_w);
+    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/fc_weight.hex", fc_w);
 
     (* rom_style = "distributed" *)
     reg signed [15:0] fc_b [0:FC_OUT-1];
-    initial $readmemh("sim/hex/fc_bias.hex", fc_b);
+    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/fc_bias.hex", fc_b);
 
     // ========================================================
     // BRAM: Intermediate buffers
@@ -170,6 +168,9 @@ module resnet_top (
     assign s_axi_rvalid  = axi_rvalid_r;
     assign s_axi_rresp   = axi_rresp_r;
 
+    // Computed word index for input data writes
+    wire [8:0] wi = (s_axi_awaddr[7:4] - 4'd0); // (addr-0x10)>>2 equivalent
+
     // Write channel
     always @(posedge aclk) begin
         if (!aresetn) begin
@@ -200,13 +201,12 @@ module resnet_top (
                 // Decode address and write
                 case (s_axi_awaddr[7:0])
                     8'h00: begin // CTRL
-                        if (s_axi_wdata[0]) start <= 1;
+                        // start is handled by dedicated always block
                     end
                     8'h10, 8'h14, 8'h18, 8'h1C, 8'h20, 8'h24, 8'h28, 8'h2C,
                     8'h30, 8'h34, 8'h38, 8'h3C, 8'h40, 8'h44, 8'h48, 8'h4C: begin
                         // Input data: offset 0x10, word index = (addr-0x10)/4
-                        reg [8:0] wi;
-                        wi = (s_axi_awaddr[7:0] - 8'h10) >> 2;
+                        // wi computed inline (no declaration in unnamed block)
                         if (wi < NUM_INPUT_WORDS) begin
                             input_mem[wi*2]   <= s_axi_wdata[15:0];
                             input_mem[wi*2+1] <= s_axi_wdata[31:16];
@@ -299,7 +299,6 @@ module resnet_top (
                 S_IDLE: begin
                     done <= 0;
                     if (start) begin
-                        start <= 0;
                         busy  <= 1;
                         state <= S_CONV;
                         // Init conv counters
@@ -385,6 +384,19 @@ module resnet_top (
 
                 default: state <= S_IDLE;
             endcase
+        end
+    end
+
+    // Single driver for start signal (fixes Vivado MDRV-1 DRC)
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            start <= 0;
+        end else begin
+            if (s_axi_awvalid && s_axi_wvalid && !write_done &&
+                (s_axi_awaddr[7:0] == 8'h00) && s_axi_wdata[0] && (state == S_IDLE))
+                start <= 1;
+            else if (state == S_CONV)
+                start <= 0; // auto-clear once FSM starts
         end
     end
 
