@@ -27,7 +27,11 @@ BRAM advantage: 4x fewer weight BRAM reads.
 import numpy as np
 import os
 
-np.random.seed(42)
+# Test-vector controls (rand_test_int4.py drives these; defaults = canonical)
+SEED = int(os.environ.get('SEED', '42'))
+IN_RANGE = int(os.environ.get('INPUT_RANGE', '16'))  # input activation range
+
+np.random.seed(SEED)
 
 # Dimensions (same as INT16 version)
 IN_CH, IN_H, IN_W = 3, 16, 16
@@ -72,7 +76,7 @@ def save_packed(filename, words, count):
     print(f"  {filename}: {len(words)} words (packed from {count} values)")
 
 # --- Generate data ---
-input_data = np.random.randint(-16, 16, size=(IN_CH, IN_H, IN_W), dtype=np.int16)
+input_data = np.random.randint(-IN_RANGE, IN_RANGE, size=(IN_CH, IN_H, IN_W), dtype=np.int16)
 
 conv_weight_raw = np.random.randn(CONV_OUT_CH, IN_CH, 3, 3) * 2
 conv_weight = quantize_int4(conv_weight_raw, scale=1.5)
@@ -82,7 +86,12 @@ fc_weight_raw = np.random.randn(FC_OUT, FC_IN) * 0.5
 fc_weight = quantize_int4(fc_weight_raw, scale=2.0)
 fc_bias = np.clip(np.random.randn(FC_OUT) * 2, -128, 127).astype(np.int16)
 
-# --- Golden model (matching INT4 Verilog) ---
+# --- Golden model (bit-exact mirror of the RTL, including 16-bit
+#     truncation at every layer boundary — see conv_relu/fc_final[15:0]) ---
+def to_int16(v):
+    """Truncate to 16-bit two's complement, exactly like Verilog [15:0]."""
+    return ((v + 32768) % 65536) - 32768
+
 def conv3x3_relu(inp, w, b):
     c_in, h, wd = inp.shape
     c_out = w.shape[0]
@@ -96,7 +105,8 @@ def conv3x3_relu(inp, w, b):
                     for ky in range(3):
                         for kx in range(3):
                             acc += int(padded[ci][y+ky][x+kx]) * int(w[co][ci][ky][kx])
-                out[co][y][x] = max(0, acc)
+                # RTL: conv_final[31] ? 16'sd0 : conv_final[15:0]
+                out[co][y][x] = 0 if acc < 0 else to_int16(acc)
     return out
 
 def maxpool2(inp):
@@ -118,7 +128,7 @@ def fc(inp_flat, w, b):
         acc = int(b[i])
         for j in range(len(inp_flat)):
             acc += int(inp_flat[j]) * int(w[i][j])
-        out[i] = acc
+        out[i] = to_int16(acc)   # RTL: fc_final[15:0]
     return out
 
 conv_out = conv3x3_relu(input_data, conv_weight, conv_bias)
