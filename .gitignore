@@ -1,0 +1,4 @@
+.build/
+*.vvp
+*.hex
+sim/hex/input_backup.hex
