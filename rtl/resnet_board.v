@@ -95,7 +95,8 @@ module resnet_board;
         .s_axi_rdata(gp0_rdata),
         .ctrl(ctrl_reg), .speed(speed_reg),
         .out_rd0({out_mem[1], out_mem[0]}),
-        .out_rd1({out_mem[3], out_mem[2]})
+        .out_rd1({out_mem[3], out_mem[2]}),
+        .status_in({done, busy})
     );
 
     // ========================================================

@@ -7,8 +7,12 @@
 // 行为仍然一句话:写 = 存值,读 = 回值。
 //
 // 寄存器映射(Register Map):
-//   偏移 0x00  CTRL   读写  bit0 = LED 手动值(L0 点灯用)
-//   偏移 0x04  SPEED  读写  呼吸分频(L1 调速用;0 = 手动挡)
+//   偏移 0x00  CTRL   写=bit0 启动脉冲;读={30'0, done, busy}(int4 版)
+//   偏移 0x04  SPEED  读写  (保留,ResNet 未用)
+//   偏移 0x08  RO     ResNet 输出 [0:1]
+//   偏移 0x0C  RO     ResNet 输出 [2:3]
+// 注:CTRL 读回原为写入值影子,int4 版改为回状态(done/busy)——仅读路径,
+//     写路径(AXI3 背压/WLAST/BID 反射)保持 lab09 验证过的原样。
 module axi_lite_slave #(
     parameter ADDR_W = 4
 )(
@@ -40,7 +44,8 @@ module axi_lite_slave #(
     output wire [31:0]       ctrl,      // ← 0x00 的影子
     output wire [31:0]       speed,     // ← 0x04 的影子
     input  wire [31:0]       out_rd0,   // ← 0x08 RO(ResNet 输出)
-    input  wire [31:0]       out_rd1    // ← 0x0C RO(ResNet 输出)
+    input  wire [31:0]       out_rd1,   // ← 0x0C RO(ResNet 输出)
+    input  wire [1:0]        status_in  // ← {done, busy},CTRL 读回用(int4 版新增)
 );
 
     assign s_axi_bresp = 2'b00;      // 永远 OKAY(未映射地址也 OK——简化,见思考题)
@@ -103,7 +108,7 @@ module axi_lite_slave #(
             if (s_axi_arvalid && s_axi_arready) begin
                 s_axi_rvalid <= 1'b1;
                 case ({s_axi_araddr[3], s_axi_araddr[2]})
-                    2'b00: s_axi_rdata <= reg_ctrl;
+                    2'b00: s_axi_rdata <= {30'd0, status_in};  // {done,busy}
                     2'b01: s_axi_rdata <= reg_speed;
                     2'b10: s_axi_rdata <= out_rd0;   // 0x08: ResNet 输出[0:1]
                     2'b11: s_axi_rdata <= out_rd1;   // 0x0C: ResNet 输出[2:3]
