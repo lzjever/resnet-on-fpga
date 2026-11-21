@@ -83,11 +83,29 @@ iverilog -g2005 -o sim/tb.vvp rtl/resnet_top_int4.v sim/tb_core_int4.v
 vvp sim/tb.vvp        # PASS: outputs match golden after 21762 cycles
 ```
 
+### Board Verification (real XC7Z020, 2026-11-21)
+
+```
+JTAG program → FCLK0 50MHz → LVL_SHFTR_EN → write 0x40000000=1
+poll status: done seen on FIRST read (sticky flag) 
+0x08 = 191af6b5  MATCH  (out0=-2379, out1=6426)
+0x0C = 0d692063  MATCH  (out2=8291,  out3=3433)
+```
+
+Resource comparison (post-route):
+
+| | INT16 (main) | INT4 (this) |
+|---|---|---|
+| Slice LUTs | 4893 (9.2%) | **2085 (3.9%)** |
+| DSPs | 3 | 7 (narrower mults → more parallel) |
+| WNS @50MHz | — | +3.79ns (≈62MHz capable) |
+
 ### Debug war stories (bugs found & fixed in this branch)
 
 1. **`{co,ci,ky}` concat ≠ `co*9+ci*3+ky`** — non-power-of-2 strides must use arithmetic; concat silently reads out-of-range → X everywhere.
 2. **`wire cv_bank = {oy[0],ox[0]}`** — implicit 1-bit wire truncates the concat's MSB; two memory banks never written. Always declare widths.
 3. **numpy `int8` shift overflow** — `12 << 8` wraps to 0 in fixed-width numpy ints; cast to Python `int()` before packing shifts.
+4. **1-cycle done pulse** — a 20ns status pulse can never be caught by PS polling (~8ms/read). Status flags crossing speed domains must be sticky (set on completion, clear only on next start).
 
 
 ## License

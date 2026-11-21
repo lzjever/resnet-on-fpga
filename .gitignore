@@ -2,3 +2,8 @@
 *.vvp
 *.hex
 sim/hex/input_backup.hex
+build_fpga_int4/
+build_int4.log
+program_int4.log
+resnet_int4.xdc
+*.backup.log

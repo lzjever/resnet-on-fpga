@@ -173,8 +173,11 @@ module resnet_top_int4 (
         end else begin
             case (state)
                 S_IDLE: begin
-                    done <= 0;
+                    // sticky done: set in S_DONE, cleared only by next start.
+                    // (A 1-cycle done pulse can never be seen by PS polling
+                    //  over AXI — reads take ~ms, the pulse lasts 20ns.)
                     if (start) begin
+                        done <= 0;
                         busy <= 1;
                         oy <= 0; co <= 0; ci <= 0; ky <= 0; acc <= 0;
                         lci <= 0; lr <= 0; lx <= 0;
