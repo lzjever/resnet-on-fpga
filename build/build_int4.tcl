@@ -7,6 +7,16 @@ create_project $proj ./build_fpga_int4 -part $part -force
 add_files [list rtl/resnet_board_int4.v rtl/resnet_top_int4.v rtl/axi_lite_slave.v]
 set_property top resnet_board_int4 [current_fileset]
 
+# $readmemh absolute paths: project-mode synth runs in its own CWD, so
+# repo-relative paths silently fail (Synth 8-4445, memories zero-filled).
+set hexdir [file normalize [pwd]/sim/hex_int4]
+set_property verilog_define [list \
+    INPUT_HEX=\"$hexdir/input.hex\" \
+    CONV_W_HEX=\"$hexdir/conv_weight_packed.hex\" \
+    CONV_B_HEX=\"$hexdir/conv_bias.hex\" \
+    FC_W_HEX=\"$hexdir/fc_weight_packed.hex\" \
+    FC_B_HEX=\"$hexdir/fc_bias.hex\"] [current_fileset]
+
 # Constraints
 set fp [open "resnet_int4.xdc" w]
 puts $fp "create_clock -period 20.000 -name sys_clk \[get_pins {PS7_i/FCLKCLK\[0\]}\]"

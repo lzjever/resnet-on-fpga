@@ -85,6 +85,19 @@ vvp sim/tb.vvp        # PASS: outputs match golden after 21762 cycles
 
 ### Board Verification (real XC7Z020, 2026-11-21)
 
+Register map @ 0x40000000 (GP0):
+
+| Offset | Read | Write |
+|---|---|---|
+| 0x00 | `{30'0, done, busy}` (sticky done, cleared by next start) | `bit0=1` start (needs 0→1 edge for each run) |
+| 0x04 | SPEED echo | SPEED (unused) |
+| 0x08 | `{out1, out0}` | **do not write** (aliases CTRL, see below) |
+| 0x0C | `{out3, out2}` | **do not write** (aliases SPEED) |
+
+Known limitation: the write path decodes only `awaddr[2]`, so a write to
+0x08 lands in CTRL (could spuriously trigger a run). Reads decode fully.
+Drivers must treat 0x08/0x0C as read-only.
+
 ```
 JTAG program → FCLK0 50MHz → LVL_SHFTR_EN → write 0x40000000=1
 poll status: done seen on FIRST read (sticky flag) 
@@ -106,6 +119,7 @@ Resource comparison (post-route):
 2. **`wire cv_bank = {oy[0],ox[0]}`** — implicit 1-bit wire truncates the concat's MSB; two memory banks never written. Always declare widths.
 3. **numpy `int8` shift overflow** — `12 << 8` wraps to 0 in fixed-width numpy ints; cast to Python `int()` before packing shifts.
 4. **1-cycle done pulse** — a 20ns status pulse can never be caught by PS polling (~8ms/read). Status flags crossing speed domains must be sticky (set on completion, clear only on next start).
+5. **`$readmemh` relative path + Vivado project mode** — synth runs in its own CWD, so repo-relative hex paths fail with only a CRITICAL WARNING (Synth 8-4445) and memories are **silently zero-filled**: simulation passes, hardware outputs all-zero with done still firing. Fix: `verilog_define` injects absolute paths at build time (RTL defaults stay relative for iverilog). Always grep the synth log for 8-4445 after touching init paths.
 
 
 ## License

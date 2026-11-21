@@ -58,22 +58,43 @@ module resnet_top_int4 (
     // ========================================================
     // Memories
     // ========================================================
+    // Hex paths default to repo-root-relative (iverilog: run from repo
+    // root). Vivado project-mode synth runs in its own directory, so
+    // build_int4.tcl injects absolute paths via verilog_define — do NOT
+    // revert to hardcoded relative-only paths (synth silently zero-fills,
+    // CRITICAL WARNING Synth 8-4445, outputs all zero on hardware).
+`ifndef INPUT_HEX
+    `define INPUT_HEX "sim/hex_int4/input.hex"
+`endif
+`ifndef CONV_W_HEX
+    `define CONV_W_HEX "sim/hex_int4/conv_weight_packed.hex"
+`endif
+`ifndef CONV_B_HEX
+    `define CONV_B_HEX "sim/hex_int4/conv_bias.hex"
+`endif
+`ifndef FC_W_HEX
+    `define FC_W_HEX "sim/hex_int4/fc_weight_packed.hex"
+`endif
+`ifndef FC_B_HEX
+    `define FC_B_HEX "sim/hex_int4/fc_bias.hex"
+`endif
+
     (* ram_style = "block" *) reg signed [15:0] input_mem [0:767];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex_int4/input.hex", input_mem);
+    initial $readmemh(`INPUT_HEX, input_mem);
 
     // INT4 packed: word[co*9 + ci*3 + ky] = {pad, kx2, kx1, kx0}
     (* rom_style = "block" *) reg [15:0] conv_w_pk [0:71];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex_int4/conv_weight_packed.hex", conv_w_pk);
+    initial $readmemh(`CONV_W_HEX, conv_w_pk);
 
     (* rom_style = "distributed" *) reg signed [15:0] conv_b [0:7];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex_int4/conv_bias.hex", conv_b);
+    initial $readmemh(`CONV_B_HEX, conv_b);
 
     // INT4 packed: word[fo*128 + fiq] = {w[fi3], w[fi2], w[fi1], w[fi0]}
     (* rom_style = "block" *) reg [15:0] fc_w_pk [0:511];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex_int4/fc_weight_packed.hex", fc_w_pk);
+    initial $readmemh(`FC_W_HEX, fc_w_pk);
 
     (* rom_style = "distributed" *) reg signed [15:0] fc_b [0:3];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex_int4/fc_bias.hex", fc_b);
+    initial $readmemh(`FC_B_HEX, fc_b);
 
     // Line buffer: 3 ch × 3 rows × 16 x, flattened to [0:143]
     // entry (ci*3+row)*16 + x ; row0 = y-1, row1 = y, row2 = y+1 (clamped)
@@ -123,7 +144,6 @@ module resnet_top_int4 (
 
     wire signed [31:0] mac3 = a0*wv0 + a1*wv1 + a2*wv2;
 
-    wire conv_last = (ci == 2) && (ky == 2);
     wire signed [31:0] conv_final = conv_b[co] + acc + mac3;
     wire signed [15:0] conv_relu  = conv_final[31] ? 16'sd0 : conv_final[15:0];
 
@@ -157,7 +177,6 @@ module resnet_top_int4 (
     wire signed [7:0] fv3 = {{4{fw[15]}}, fw[15:12]};
     wire signed [31:0] mac4 = pb0[fiq]*fv0 + pb1[fiq]*fv1 + pb2[fiq]*fv2 + pb3[fiq]*fv3;
 
-    wire fc_last = (fiq == 127);
     wire signed [31:0] fc_final = fc_b[fo] + acc + mac4;
 
     // ========================================================

@@ -2,12 +2,14 @@
 """Generate INT4-quantized weights for the ResNet CNN.
 
 Quantization scheme:
-  - Conv weights: INT4 (-8 to +7) — packed 4 per 16-bit word
-  - Conv bias:   INT4 (-8 to +7) — packed 4 per 16-bit word
-  - FC weights:  INT4 (-8 to +7) — packed 4 per 16-bit word
-  - FC bias:     INT8 (for wider dynamic range)
-  - Activations: INT8 (input stays INT8 for image-like data)
-  - Accumulator: INT32 (plenty of headroom)
+  - Conv weights: INT4 (-8 to +7) — packed 4 per 16-bit word (see below)
+  - Conv bias:    INT4 value stored in a plain INT16 word
+  - FC weights:   INT4 (-8 to +7) — packed 4 per 16-bit word
+  - FC bias:      INT8 value stored in a plain INT16 word
+  - Activations:  INT16 (golden model truncates to 16 bits at each layer
+                  boundary, exactly mirroring the RTL)
+  - Accumulator:  INT32 (plenty of headroom; 16-bit truncation points are
+                  conv_relu[15:0] and fc_final[15:0])
 
 INT4 packing (4 values per 16-bit word):
   bits [3:0]   = w0 (lowest)
