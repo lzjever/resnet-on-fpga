@@ -13,7 +13,14 @@ module resnet_board;
     wire [3:0] fclk_bus;
     wire fclk0 = fclk_bus[0];
     wire [3:0] fclk_reset_n_bus;
-    wire aresetn = fclk_reset_n_bus[0];
+
+    // Reset synchronizer: FCLKRESETN is async to fclk0 (UG585 guidance)
+    reg [1:0] rst_sync;
+    always @(posedge fclk0 or negedge fclk_reset_n_bus[0]) begin
+        if (!fclk_reset_n_bus[0]) rst_sync <= 2'b00;
+        else                       rst_sync <= {rst_sync[0], 1'b1};
+    end
+    wire aresetn = rst_sync[1];
 
     // AXI GP0 signals
     wire [31:0] gp0_awaddr;
@@ -83,20 +90,20 @@ module resnet_board;
 
     axi_lite_slave axi_if (
         .aclk(fclk0), .aresetn(aresetn),
-        .s_axi_awaddr(gp0_awaddr[3:0]),
+        .s_axi_awaddr(gp0_awaddr[4:0]),
         .s_axi_awvalid(gp0_awvalid), .s_axi_awready(gp0_awready),
         .s_axi_wdata(gp0_wdata),
         .s_axi_wvalid(gp0_wvalid), .s_axi_wready(gp0_wready),
         .s_axi_wlast(gp0_wlast),
         .s_axi_bvalid(gp0_bvalid), .s_axi_bready(gp0_bready), .s_axi_bresp(gp0_bresp),
-        .s_axi_araddr(gp0_araddr[3:0]),
+        .s_axi_araddr(gp0_araddr[4:0]),
         .s_axi_arvalid(gp0_arvalid), .s_axi_arready(gp0_arready),
         .s_axi_rvalid(gp0_rvalid), .s_axi_rready(gp0_rready), .s_axi_rresp(gp0_rresp),
         .s_axi_rdata(gp0_rdata),
         .ctrl(ctrl_reg), .speed(speed_reg),
         .out_rd0({out_mem[1], out_mem[0]}),
         .out_rd1({out_mem[3], out_mem[2]}),
-        .status_in({done, busy})
+        .status_in({4'd0, done, busy})
     );
 
     // ========================================================
@@ -115,17 +122,35 @@ module resnet_board;
     reg [2:0] fo; reg [9:0] fi;
     reg signed [31:0] acc;
 
-    // Memory
+    // Memory — hex paths repo-relative by default; build.tcl injects
+    // absolute paths via verilog_define for Vivado project-mode synth
+    // (Synth 8-4445 zero-fill trap — see resnet_top_int4.v).
+`ifndef HEX16_INPUT
+    `define HEX16_INPUT "sim/hex/input.hex"
+`endif
+`ifndef HEX16_CONV_W
+    `define HEX16_CONV_W "sim/hex/conv_weight.hex"
+`endif
+`ifndef HEX16_CONV_B
+    `define HEX16_CONV_B "sim/hex/conv_bias.hex"
+`endif
+`ifndef HEX16_FC_W
+    `define HEX16_FC_W "sim/hex/fc_weight.hex"
+`endif
+`ifndef HEX16_FC_B
+    `define HEX16_FC_B "sim/hex/fc_bias.hex"
+`endif
+
     (* ram_style = "block" *) reg signed [15:0] input_mem [0:767];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/input.hex", input_mem);
+    initial $readmemh(`HEX16_INPUT, input_mem);
     (* rom_style = "block" *) reg signed [15:0] conv_w [0:215];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/conv_weight.hex", conv_w);
+    initial $readmemh(`HEX16_CONV_W, conv_w);
     (* rom_style = "distributed" *) reg signed [15:0] conv_b [0:7];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/conv_bias.hex", conv_b);
+    initial $readmemh(`HEX16_CONV_B, conv_b);
     (* rom_style = "block" *) reg signed [15:0] fc_w [0:2047];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/fc_weight.hex", fc_w);
+    initial $readmemh(`HEX16_FC_W, fc_w);
     (* rom_style = "distributed" *) reg signed [15:0] fc_b [0:3];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/fc_bias.hex", fc_b);
+    initial $readmemh(`HEX16_FC_B, fc_b);
     (* ram_style = "block" *) reg signed [15:0] conv_out [0:2047];
     (* ram_style = "block" *) reg signed [15:0] pool_out [0:511];
     (* ram_style = "distributed" *) reg signed [15:0] out_mem [0:3];

@@ -29,6 +29,7 @@ module resnet_top_int4 (
     input  wire        start,       // 1-cycle pulse
     output reg         done,
     output reg         busy,
+    output reg  [3:0]  run_cnt,    // +1 on each accepted start (wraps)
     output wire signed [15:0] out0,
     output wire signed [15:0] out1,
     output wire signed [15:0] out2,
@@ -113,6 +114,10 @@ module resnet_top_int4 (
     (* ram_style = "block" *) reg signed [15:0] pb2 [0:127];
     (* ram_style = "block" *) reg signed [15:0] pb3 [0:127];
 
+    // out_hold: FC stages write here; out_mem is published ATOMICALLY in
+    // S_DONE (all 4 words same cycle) — a reset mid-FC can never expose a
+    // half-updated result alongside status=0 (codex finding #9)
+    (* ram_style = "distributed" *) reg signed [15:0] out_hold [0:3];
     (* ram_style = "distributed" *) reg signed [15:0] out_mem [0:3];
     assign out0 = out_mem[0];
     assign out1 = out_mem[1];
@@ -184,7 +189,7 @@ module resnet_top_int4 (
     // ========================================================
     always @(posedge aclk) begin
         if (!aresetn) begin
-            state <= S_IDLE; done <= 0; busy <= 0;
+            state <= S_IDLE; done <= 0; busy <= 0; run_cnt <= 0;
             oy <= 0; ox <= 0; co <= 0; ci <= 0; ky <= 0;
             lci <= 0; lr <= 0; lx <= 0;
             pc <= 0; py <= 0; px <= 0;
@@ -198,6 +203,7 @@ module resnet_top_int4 (
                     if (start) begin
                         done <= 0;
                         busy <= 1;
+                        run_cnt <= run_cnt + 4'd1;
                         oy <= 0; co <= 0; ci <= 0; ky <= 0; acc <= 0;
                         lci <= 0; lr <= 0; lx <= 0;
                         state <= S_LOAD;
@@ -267,7 +273,7 @@ module resnet_top_int4 (
                     acc <= acc + mac4;
                     if (fiq != 127) fiq <= fiq + 7'd1;
                     else begin
-                        out_mem[fo] <= fc_final[15:0];
+                        out_hold[fo] <= fc_final[15:0];
                         fiq <= 0; acc <= 0;
                         if (fo != 3) fo <= fo + 2'd1;
                         else state <= S_DONE;
@@ -275,6 +281,11 @@ module resnet_top_int4 (
                 end
 
                 S_DONE: begin
+                    // atomic publish: all four outputs in one cycle
+                    out_mem[0] <= out_hold[0];
+                    out_mem[1] <= out_hold[1];
+                    out_mem[2] <= out_hold[2];
+                    out_mem[3] <= out_hold[3];
                     busy <= 0; done <= 1; state <= S_IDLE;
                 end
 

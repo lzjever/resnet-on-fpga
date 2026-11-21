@@ -27,7 +27,6 @@ Input (3×16×16) → Conv3×3 (3→8ch, pad=1) + ReLU
 rtl/resnet_top.v      — Complete CNN (AXI-Lite + compute FSM)
 sim/gen_weights.py    — Weight generation + Python golden model
 sim/tb_core.v         — Testbench (direct FSM control)
-sim/tb_resnet.v       — Testbench (AXI interface, WIP)
 build/build.tcl       — Vivado build script
 ```
 
@@ -79,9 +78,22 @@ bench/board_test_int4.sh   — On-board end-to-end test (FCLK0 + devmem)
 
 ```bash
 python3 sim/gen_weights_int4.py
-iverilog -g2005 -o sim/tb.vvp rtl/resnet_top_int4.v sim/tb_core_int4.v
+iverilog -g2012 -o sim/tb.vvp rtl/resnet_top_int4.v sim/tb_core_int4.v
 vvp sim/tb.vvp        # PASS: outputs match golden after 21762 cycles
 ```
+
+### Building a bitstream
+
+Hex data files are **generated artifacts** (not committed) — always run the
+generator first, from the repo root:
+
+```bash
+python3 sim/gen_weights_int4.py            # or gen_weights.py for INT16
+vivado -mode batch -source build/build_int4.tcl   # → build_fpga_int4/*.bit
+```
+
+The build scripts inject absolute hex paths via `verilog_define` (project-mode
+synth runs in its own CWD; relative paths silently zero-fill — Synth 8-4445).
 
 ### Board Verification (real XC7Z020, 2026-11-21)
 
@@ -91,12 +103,31 @@ Register map @ 0x40000000 (GP0):
 |---|---|---|
 | 0x00 | `{30'0, done, busy}` (sticky done, cleared by next start) | `bit0=1` start (needs 0→1 edge for each run) |
 | 0x04 | SPEED echo | SPEED (unused) |
-| 0x08 | `{out1, out0}` | **do not write** (aliases CTRL, see below) |
-| 0x0C | `{out3, out2}` | **do not write** (aliases SPEED) |
+| 0x08 | `{out1, out0}` | ignored (full decode, read-only) |
+| 0x0C | `{out3, out2}` | ignored (full decode, read-only) |
 
-Known limitation: the write path decodes only `awaddr[2]`, so a write to
-0x08 lands in CTRL (could spuriously trigger a run). Reads decode fully.
-Drivers must treat 0x08/0x0C as read-only.
+Writes to 0x08/0x0C are safely ignored (verified on hardware: writing 0x08
+does not trigger a run). An earlier revision decoded only `awaddr[2]` and
+would alias such writes into CTRL — fixed with full `awaddr[3:2]` decode.
+
+### Known limitations (deliberate, unreachable from the Linux /dev/mem flow)
+
+- **AXI bursts unsupported** (single-beat only): a multi-beat GP0 write
+  would wedge the slave (WLAST=0 first beat never completes), and a
+  multi-beat read returns one beat only. CPU accesses to Device memory are
+  architecturally single-beat, so devmem//dev/mem can never trigger this.
+  A DMA master would need an AXI3-to-Lite bridge.
+- **WSTRB ignored**: byte-lane strobes are not wired (writes are 4-byte).
+  Linux 32-bit device writes always assert WSTRB=1111.
+- **Start while busy is silently ignored** (returns OKAY). Drivers must
+  wait for done, then write 0 followed by 1.
+- **Status is captured at AR handshake** (standard AXI-Lite): a read
+  queued on the exact edge of a new start can deliver the pre-start
+  value. Polling twice resolves any ambiguity.
+- **FCLK0 setting assumes IO PLL = 1000 MHz** (our boot config); a
+  different PLL rate changes the actual FCLK0 and timing margin.
+- **One weight generator at a time**: gen_weights_int4.py writes a shared
+  hex dir; concurrent runs can interleave files.
 
 ```
 JTAG program → FCLK0 50MHz → LVL_SHFTR_EN → write 0x40000000=1

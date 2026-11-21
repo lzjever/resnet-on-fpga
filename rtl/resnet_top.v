@@ -78,28 +78,48 @@ module resnet_top (
     // ========================================================
     // BRAM: Input buffer (768 × 16-bit)
     // ========================================================
+    // Hex paths default to repo-root-relative (iverilog: run from repo
+    // root). Vivado project-mode synth runs in its own directory, so
+    // build.tcl injects absolute paths via verilog_define — do NOT revert
+    // to hardcoded paths (synth silently zero-fills, Synth 8-4445).
+`ifndef HEX16_INPUT
+    `define HEX16_INPUT "sim/hex/input.hex"
+`endif
+`ifndef HEX16_CONV_W
+    `define HEX16_CONV_W "sim/hex/conv_weight.hex"
+`endif
+`ifndef HEX16_CONV_B
+    `define HEX16_CONV_B "sim/hex/conv_bias.hex"
+`endif
+`ifndef HEX16_FC_W
+    `define HEX16_FC_W "sim/hex/fc_weight.hex"
+`endif
+`ifndef HEX16_FC_B
+    `define HEX16_FC_B "sim/hex/fc_bias.hex"
+`endif
+
     (* ram_style = "block" *)
     reg signed [15:0] input_mem [0:IN_CH*IN_H*IN_W-1];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/input.hex", input_mem);
+    initial $readmemh(`HEX16_INPUT, input_mem);
 
     // ========================================================
     // ROM: Weights (compile-time constants)
     // ========================================================
     (* rom_style = "block" *)
     reg signed [15:0] conv_w [0:OUT_CH*IN_CH*9-1];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/conv_weight.hex", conv_w);
+    initial $readmemh(`HEX16_CONV_W, conv_w);
 
     (* rom_style = "distributed" *)
     reg signed [15:0] conv_b [0:OUT_CH-1];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/conv_bias.hex", conv_b);
+    initial $readmemh(`HEX16_CONV_B, conv_b);
 
     (* rom_style = "block" *)
     reg signed [15:0] fc_w [0:FC_OUT*FC_IN-1];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/fc_weight.hex", fc_w);
+    initial $readmemh(`HEX16_FC_W, fc_w);
 
     (* rom_style = "distributed" *)
     reg signed [15:0] fc_b [0:FC_OUT-1];
-    initial $readmemh("/home/percy/works/resnet-on-fpga/sim/hex/fc_bias.hex", fc_b);
+    initial $readmemh(`HEX16_FC_B, fc_b);
 
     // ========================================================
     // BRAM: Intermediate buffers

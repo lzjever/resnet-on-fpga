@@ -19,7 +19,7 @@ def run_case(seed, in_range):
         return f'GEN FAIL', gen.stderr[-500:]
     golden = next((l for l in gen.stdout.splitlines() if 'Golden output' in l), '?')
 
-    cmp_ = subprocess.run(['iverilog', '-g2005', '-o', '/tmp/rand_t.vvp',
+    cmp_ = subprocess.run(['iverilog', '-g2012', '-o', '/tmp/rand_t.vvp',
                            f'{repo}/rtl/resnet_top_int4.v', f'{repo}/sim/tb_core_int4.v'],
                           capture_output=True, text=True)
     if cmp_.returncode:

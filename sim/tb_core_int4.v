@@ -6,6 +6,9 @@
 // model). Also reports cycle count start→done for the speed story.
 // ============================================================
 `timescale 1ns/1ps
+`ifndef GOLDEN_HEX
+    `define GOLDEN_HEX "sim/hex_int4/golden_output.hex"
+`endif
 module tb_core_int4;
 
     reg aclk = 0;
@@ -31,8 +34,12 @@ module tb_core_int4;
     integer st_count [0:7];
 
     initial begin
-        $readmemh("/home/percy/works/resnet-on-fpga/sim/hex_int4/golden_output.hex", golden);
+        // Sentinel init: if $readmemh fails (wrong CWD / missing file),
+        // golden stays DEAD and the comparison FAILS loudly — a silent
+        // all-X load must never print PASS (codex #14).
+        for (i = 0; i < 4; i = i + 1) golden[i] = 16'hDEAD;
         for (i = 0; i < 8; i = i + 1) st_count[i] = 0;
+        $readmemh(`GOLDEN_HEX, golden);
         forever @(posedge aclk) st_count[dut.state] = st_count[dut.state] + 1;
     end
 
@@ -58,7 +65,7 @@ module tb_core_int4;
 
         if (!finished) begin
             $display("TIMEOUT after 100000 cycles! state stuck.");
-            $finish;
+            $fatal(1, "tb_core_int4: timeout");
         end
 
         // state histogram (0=IDLE 1=LOAD 2=CONV 3=POOL 4=FC 5=DONE)
@@ -75,7 +82,7 @@ module tb_core_int4;
             $display("PASS: outputs [%0d, %0d, %0d, %0d] match golden after %0d cycles",
                      $signed(o0), $signed(o1), $signed(o2), $signed(o3), cycles);
         else
-            $display("FAIL: %0d mismatched outputs", errors);
+            $fatal(1, "FAIL: %0d mismatched outputs", errors);
         $finish;
     end
 

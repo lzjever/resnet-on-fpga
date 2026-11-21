@@ -9,12 +9,13 @@
 // 寄存器映射(Register Map):
 //   偏移 0x00  CTRL   写=bit0 启动脉冲;读={30'0, done, busy}(int4 版)
 //   偏移 0x04  SPEED  读写  (保留,ResNet 未用)
-//   偏移 0x08  RO     ResNet 输出 [0:1]
-//   偏移 0x0C  RO     ResNet 输出 [2:3]
+//   偏移 0x08  RO     ResNet 输出 [0:1](写入忽略——全译码)
+//   偏移 0x0C  RO     ResNet 输出 [2:3](写入忽略——全译码)
 // 注:CTRL 读回原为写入值影子,int4 版改为回状态(done/busy)——仅读路径,
-//     写路径(AXI3 背压/WLAST/BID 反射)保持 lab09 验证过的原样。
+//     写路径(AXI3 背压/WLAST/BID 反射)保持 lab09 验证过的原样;
+//     写译码已从 1 位(awbuf[2],0x08 会误落 CTRL)改为全译码(awbuf[3:2])。
 module axi_lite_slave #(
-    parameter ADDR_W = 4
+    parameter ADDR_W = 5
 )(
     input  wire              aclk,
     input  wire              aresetn,
@@ -30,7 +31,7 @@ module axi_lite_slave #(
     // ---------- 写响应通道 B ----------
     output reg               s_axi_bvalid,
     input  wire              s_axi_bready,
-    output wire [1:0]        s_axi_bresp,
+    output reg  [1:0]        s_axi_bresp,
     // ---------- 读地址通道 AR ----------
     input  wire [ADDR_W-1:0] s_axi_araddr,
     input  wire              s_axi_arvalid,
@@ -39,17 +40,18 @@ module axi_lite_slave #(
     output reg               s_axi_rvalid,
     output reg  [31:0]       s_axi_rdata,
     input  wire              s_axi_rready,
-    output wire [1:0]        s_axi_rresp,
+    output reg  [1:0]        s_axi_rresp,
     // ---------- 两个旋钮的对外化身 ----------
     output wire [31:0]       ctrl,      // ← 0x00 的影子
     output wire [31:0]       speed,     // ← 0x04 的影子
     input  wire [31:0]       out_rd0,   // ← 0x08 RO(ResNet 输出)
     input  wire [31:0]       out_rd1,   // ← 0x0C RO(ResNet 输出)
-    input  wire [1:0]        status_in  // ← {done, busy},CTRL 读回用(int4 版新增)
+    input  wire [5:0]        status_in  // ← {run_cnt[3:0], done, busy},CTRL 读回
 );
 
-    assign s_axi_bresp = 2'b00;      // 永远 OKAY(未映射地址也 OK——简化,见思考题)
-    assign s_axi_rresp = 2'b00;
+    // bresp/rresp: OKAY inside the 0x00–0x0C aperture, SLVERR outside
+    // (codex #8: upper address bits were dropped — a write to 0x10 etc.
+    //  aliased into CTRL and could START the core; now rejected).
 
     // ========================================================
     // 写路径(与 lab08 相同的"各自记账,到齐落值",多了 case 译码)
@@ -71,6 +73,7 @@ module axi_lite_slave #(
             aw_seen <= 1'b0;  w_seen <= 1'b0;
             reg_ctrl <= 32'd0;  reg_speed <= 32'd0;
             s_axi_bvalid <= 1'b0;
+            s_axi_bresp  <= 2'b00;
         end else begin
             if (s_axi_awvalid && s_axi_awready) begin
                 aw_seen <= 1'b1;
@@ -82,10 +85,16 @@ module axi_lite_slave #(
                 wlastbuf <= s_axi_wlast;   // AXI3:随数据锁存末拍标记
             end
             if (write_fire) begin
-                case (awbuf[2])                  // ← DIFF:地址译码。字对齐,第 2 位区分 0x00/0x04
-                    1'b0: reg_ctrl  <= wbuf;     //    偏移 0x00 → CTRL
-                    1'b1: reg_speed <= wbuf;     //    偏移 0x04 → SPEED
-                endcase
+                if (awbuf[4]) begin
+                    s_axi_bresp <= 2'b10;        // outside aperture → SLVERR
+                end else begin
+                    s_axi_bresp <= 2'b00;        // OKAY
+                    case (awbuf[3:2])            // 全译码:0x08/0x0C 为只读,写入忽略
+                        2'b00: reg_ctrl  <= wbuf;    //    偏移 0x00 → CTRL
+                        2'b01: reg_speed <= wbuf;    //    偏移 0x04 → SPEED
+                        default: ;                   //    0x08/0x0C → RO,忽略
+                    endcase
+                end
                 aw_seen <= 1'b0;
                 w_seen  <= 1'b0;
                 s_axi_bvalid <= 1'b1;
@@ -96,23 +105,31 @@ module axi_lite_slave #(
     end
 
     // ========================================================
-    // 读路径(同样的 case 译码)
+    // 读路径(同样的 case 译码;ARREADY 跟复位门控——codex #5:
+    // 复位期间若 PS 发读,旧版 ARREADY=1 会吞掉地址却不回数据,PS 挂死)
     // ========================================================
-    assign s_axi_arready = !s_axi_rvalid;
+    assign s_axi_arready = aresetn && !s_axi_rvalid;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
             s_axi_rvalid <= 1'b0;
             s_axi_rdata  <= 32'd0;
+            s_axi_rresp  <= 2'b00;
         end else begin
             if (s_axi_arvalid && s_axi_arready) begin
                 s_axi_rvalid <= 1'b1;
-                case ({s_axi_araddr[3], s_axi_araddr[2]})
-                    2'b00: s_axi_rdata <= {30'd0, status_in};  // {done,busy}
-                    2'b01: s_axi_rdata <= reg_speed;
-                    2'b10: s_axi_rdata <= out_rd0;   // 0x08: ResNet 输出[0:1]
-                    2'b11: s_axi_rdata <= out_rd1;   // 0x0C: ResNet 输出[2:3]
-                endcase
+                if (s_axi_araddr[4]) begin
+                    s_axi_rresp <= 2'b10;          // outside aperture → SLVERR
+                    s_axi_rdata <= 32'd0;
+                end else begin
+                    s_axi_rresp <= 2'b00;
+                    case ({s_axi_araddr[3], s_axi_araddr[2]})
+                        2'b00: s_axi_rdata <= {26'd0, status_in};  // {run_cnt,done,busy}
+                        2'b01: s_axi_rdata <= reg_speed;
+                        2'b10: s_axi_rdata <= out_rd0;   // 0x08: ResNet 输出[0:1]
+                        2'b11: s_axi_rdata <= out_rd1;   // 0x0C: ResNet 输出[2:3]
+                    endcase
+                end
             end else if (s_axi_rvalid && s_axi_rready) begin
                 s_axi_rvalid <= 1'b0;
             end

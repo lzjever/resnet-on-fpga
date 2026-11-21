@@ -8,16 +8,26 @@
 //
 // Register map @ 0x40000000:
 //   0x00 CTRL  write bit0=1 → start pulse (edge-detected)
-//              read {30'0, done, busy}
+//              read {26'0, run_cnt[3:0], done, busy}
+//   0x04 SPEED (unused)
 //   0x08 RO    {out1, out0}   (INT16 two's complement each)
 //   0x0C RO    {out3, out2}
+//   outside 0x00-0x0C → SLVERR (full aperture decode)
 // ============================================================
 module resnet_board_int4;
 
     wire [3:0] fclk_bus;
     wire fclk0 = fclk_bus[0];
     wire [3:0] fclk_reset_n_bus;
-    wire aresetn = fclk_reset_n_bus[0];
+
+    // Reset synchronizer (codex #4): FCLKRESETN is async to fclk0.
+    // Async assert / sync deassert — standard 2-flop, per UG585 guidance.
+    reg [1:0] rst_sync;
+    always @(posedge fclk0 or negedge fclk_reset_n_bus[0]) begin
+        if (!fclk_reset_n_bus[0]) rst_sync <= 2'b00;
+        else                       rst_sync <= {rst_sync[0], 1'b1};
+    end
+    wire aresetn = rst_sync[1];
 
     // ---------- AXI GP0 ----------
     wire [31:0] gp0_awaddr;
@@ -66,20 +76,21 @@ module resnet_board_int4;
     // ---------- Lite slave ----------
     wire [31:0] ctrl_reg, speed_reg;
     wire        core_done, core_busy;
+    wire [3:0]  core_runs;
     wire signed [15:0] o0, o1, o2, o3;
 
     axi_lite_slave axi_if (
         .aclk(fclk0), .aresetn(aresetn),
-        .s_axi_awaddr(gp0_awaddr[3:0]), .s_axi_awvalid(gp0_awvalid), .s_axi_awready(gp0_awready),
+        .s_axi_awaddr(gp0_awaddr[4:0]), .s_axi_awvalid(gp0_awvalid), .s_axi_awready(gp0_awready),
         .s_axi_wdata(gp0_wdata), .s_axi_wvalid(gp0_wvalid), .s_axi_wready(gp0_wready),
         .s_axi_wlast(gp0_wlast),
         .s_axi_bvalid(gp0_bvalid), .s_axi_bready(gp0_bready), .s_axi_bresp(gp0_bresp),
-        .s_axi_araddr(gp0_araddr[3:0]), .s_axi_arvalid(gp0_arvalid), .s_axi_arready(gp0_arready),
+        .s_axi_araddr(gp0_araddr[4:0]), .s_axi_arvalid(gp0_arvalid), .s_axi_arready(gp0_arready),
         .s_axi_rvalid(gp0_rvalid), .s_axi_rready(gp0_rready), .s_axi_rresp(gp0_rresp),
         .s_axi_rdata(gp0_rdata),
         .ctrl(ctrl_reg), .speed(speed_reg),
         .out_rd0({o1, o0}), .out_rd1({o3, o2}),
-        .status_in({core_done, core_busy})
+        .status_in({core_runs, core_done, core_busy})
     );
 
     // ---------- Start pulse: edge-detect ctrl_reg[0] ----------
@@ -90,7 +101,7 @@ module resnet_board_int4;
     // ---------- INT4 core ----------
     resnet_top_int4 core (
         .aclk(fclk0), .aresetn(aresetn), .start(start_pulse),
-        .done(core_done), .busy(core_busy),
+        .done(core_done), .busy(core_busy), .run_cnt(core_runs),
         .out0(o0), .out1(o1), .out2(o2), .out3(o3)
     );
 

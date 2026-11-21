@@ -1,9 +1,12 @@
 .build/
 *.vvp
 *.hex
-sim/hex/input_backup.hex
 build_fpga_int4/
 build_int4.log
 program_int4.log
 resnet_int4.xdc
 *.backup.log
+build_int16.log
+build_fpga/
+build_int16.log
+resnet.xdc
